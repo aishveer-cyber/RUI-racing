@@ -7,7 +7,6 @@ on:
   workflow_dispatch:
 
 env:
-  APP_NAME: RUI Racing
   NODE_VERSION: "20"
   JAVA_VERSION: "21"
 
@@ -17,21 +16,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Unpack the project from the zip
+        run: |
+          set -euo pipefail
+          unzip -q RUI-Racing-source.zip -d project
+          test -f project/package.json
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
 
       - name: Install dependencies
+        working-directory: project
         env:
           PUPPETEER_SKIP_DOWNLOAD: "1"
         run: npm ci
 
       - name: Build the web game
+        working-directory: project
         run: npm run build
 
       - name: Sync web assets into the Android project
+        working-directory: project
         run: npx cap sync android
 
       - name: Set up JDK
@@ -53,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${KEYSTORE_BASE64:-}" ]; then
-            echo "::error::Secret ANDROID_KEYSTORE_BASE64 is missing - see SETUP.md step 4."
+            echo "::error::Secret ANDROID_KEYSTORE_BASE64 is missing - add the four secrets first."
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/keys"
@@ -65,9 +72,10 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ hashFiles('project/android/**/*.gradle', 'project/android/gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Build release APK and AAB
+        working-directory: project/android
         env:
           RUI_KEYSTORE_PATH: ${{ runner.temp }}/keys/release.keystore
           RUI_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -77,33 +85,33 @@ jobs:
           RUI_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || '1.0.0' }}
         run: |
           set -euo pipefail
-          chmod +x android/gradlew
-          cd android
+          chmod +x gradlew
           ./gradlew --no-daemon assembleRelease bundleRelease
 
       - name: Collect artifacts
+        working-directory: project
         run: |
           set -euo pipefail
           mkdir -p out
-          cp android/app/build/outputs/apk/release/app-release.apk   "out/RUI-Racing.apk"
-          cp android/app/build/outputs/bundle/release/app-release.aab "out/RUI-Racing.aab"
+          cp android/app/build/outputs/apk/release/app-release.apk   out/RUI-Racing.apk
+          cp android/app/build/outputs/bundle/release/app-release.aab out/RUI-Racing.aab
           ls -lh out/
 
       - name: Verify the APK is signed
         run: |
           set -euo pipefail
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs out/RUI-Racing.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs project/out/RUI-Racing.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: RUI-Racing-apk
-          path: out/RUI-Racing.apk
+          path: project/out/RUI-Racing.apk
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
           name: RUI-Racing-aab
-          path: out/RUI-Racing.aab
+          path: project/out/RUI-Racing.aab
           if-no-files-found: error
 
       - name: Attach to GitHub release
@@ -111,5 +119,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            out/RUI-Racing.apk
-            out/RUI-Racing.aab
+            project/out/RUI-Racing.apk
+            project/out/RUI-Racing.aab
