@@ -70,6 +70,16 @@ jobs:
       - name: Point Gradle at the SDK
         run: echo "sdk.dir=$SDK" > project/android/local.properties
 
+      - name: Set version code and name
+        env:
+          RUI_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || '1.0.0' }}
+        run: |
+          set -euo pipefail
+          F=project/android/app/build.gradle
+          sed -i -E "s|^[[:space:]]*versionCode .*$|        versionCode ${GITHUB_RUN_NUMBER}|" "$F"
+          sed -i -E "s|^[[:space:]]*versionName .*$|        versionName \"${RUI_VERSION_NAME:-1.0.0}\"|" "$F"
+          grep -n "versionCode\|versionName" "$F"
+
       - name: Prepare the signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -103,12 +113,25 @@ jobs:
           RUI_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'throwaway' }}
           RUI_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'rui' }}
           RUI_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'throwaway' }}
-          RUI_VERSION_CODE: ${{ github.run_number }}
-          RUI_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || '1.0.0' }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease bundleRelease
+          set +e
+          ./gradlew --no-daemon assembleRelease bundleRelease 2>&1 | tee /tmp/gradle.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "### Gradle failure"
+              echo '```'
+              sed -n '/FAILURE:/,/^\* Try:/p' /tmp/gradle.log || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "===== GRADLE FAILURE ====="
+            sed -n '/FAILURE:/,/^\* Try:/p' /tmp/gradle.log || true
+            echo "===== END ====="
+            exit "$status"
+          fi
 
       - name: Collect artifacts
         working-directory: project
