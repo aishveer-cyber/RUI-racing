@@ -47,12 +47,28 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Use the Android SDK preinstalled on the runner
         run: |
-          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          echo "SDK=$SDK" >> "$GITHUB_ENV"
+          echo "Using $SDK"
+          ls "$SDK"
+          SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKM" ]; then
+            if [ ! -d "$SDK/platforms/android-35" ] || [ ! -d "$SDK/build-tools/35.0.0" ]; then
+              echo "Installing missing SDK packages"
+              yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+              "$SDKM" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+            else
+              echo "platforms;android-35 and build-tools;35.0.0 already present"
+            fi
+          else
+            echo "sdkmanager not found at $SDKM - relying on what the image ships"
+          fi
+
+      - name: Point Gradle at the SDK
+        run: echo "sdk.dir=$SDK" > project/android/local.properties
 
       - name: Restore signing keystore
         env:
@@ -100,7 +116,9 @@ jobs:
       - name: Verify the APK is signed
         run: |
           set -euo pipefail
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs project/out/RUI-Racing.apk
+          APKSIGNER=$(ls -d "$SDK"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          echo "using $APKSIGNER"
+          "$APKSIGNER" verify --print-certs project/out/RUI-Racing.apk
 
       - uses: actions/upload-artifact@v4
         with:
